@@ -221,6 +221,8 @@ class DeterministicAtlas(AbstractStatisticalModel):
                 gpu_mode=gpu_mode,
                 kernel_width=smoothing_kernel_width,
             )
+        else:
+            self.sobolev_kernel = None
 
         # Template data.
         self.fixed_effects["template_data"] = self.template.get_data()
@@ -243,6 +245,7 @@ class DeterministicAtlas(AbstractStatisticalModel):
             self.dimension,
             number_of_subjects,
         )
+
         self.number_of_subjects = number_of_subjects
 
         self.process_per_gpu = process_per_gpu
@@ -326,8 +329,7 @@ class DeterministicAtlas(AbstractStatisticalModel):
     def set_fixed_effects(self, fixed_effects):
         if not self.freeze_template:
             template_data = {
-                key: fixed_effects[key]
-                for key in self.fixed_effects["template_data"]
+                key: fixed_effects[key] for key in self.fixed_effects["template_data"]
             }
             self.set_template_data(template_data)
         if not self.freeze_control_points:

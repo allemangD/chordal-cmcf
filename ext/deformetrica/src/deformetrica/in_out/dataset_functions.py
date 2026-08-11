@@ -253,7 +253,7 @@ def create_template_metadata(template_specifications, dimension=None, gpu_mode=N
 
         objects_norm.append(object_norm)
 
-        if object_norm in ["current", "pointcloud", "varifold"]:
+        if object_norm in ["current", "pointcloud", "varifold", "extendedvarifold"]:
             objects_norm_kernels.append(
                 kernel_factory.factory(
                     object["kernel_type"],
@@ -342,6 +342,7 @@ def _get_norm_for_object(object, object_id):
             object_norm = object["attachment_type"].lower()
             assert object_norm in [
                 "Varifold".lower(),
+                "ExtendedVarifold".lower(),
                 "Current".lower(),
                 "Landmark".lower(),
             ]

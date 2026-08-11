@@ -1,8 +1,13 @@
 import logging
 
+import igl
+import numpy as np
 import torch
+from torch import Tensor
 
+from deformetrica.core.observations import SurfaceMesh
 from deformetrica.support import utilities
+from deformetrica.support.kernels import AbstractKernel
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +77,15 @@ class MultiObjectAttachment:
 
             elif self.attachment_types[i].lower() == "varifold":
                 distances[i] = self.varifold_distance(
+                    data["landmark_points"][pos : pos + obj1.get_number_of_points()],
+                    obj1,
+                    obj2,
+                    self.kernels[i],
+                )
+                pos += obj1.get_number_of_points()
+
+            elif self.attachment_types[i].lower() == "extendedvarifold":
+                distances[i] = self.extended_varifold_distance(
                     data["landmark_points"][pos : pos + obj1.get_number_of_points()],
                     obj1,
                     obj2,
@@ -166,41 +180,139 @@ class MultiObjectAttachment:
         )
 
     @staticmethod
-    def varifold_distance(points, source, target, kernel):
+    def varifold_distance(
+        points: Tensor,
+        source: SurfaceMesh,
+        target: SurfaceMesh,
+        kernel: AbstractKernel,
+    ):
         """
-        Returns the current distance between the 3D meshes
+        Returns the varifold distance between the 3D meshes
         source and target are SurfaceMesh objects
         points are source points (torch tensor)
         """
         device, _ = utilities.get_best_device(kernel.gpu_mode)
-        c1, n1, c2, n2 = (
-            MultiObjectAttachment.__get_source_and_target_centers_and_normals(
-                points, source, target, device=device
+        dtype = points.dtype
+
+        pa = points
+        fa = source.connectivity
+        na = igl.per_vertex_normals(pa.detach(), fa)
+        aa = igl.massmatrix(pa.detach(), fa).diagonal()
+
+        pb = target.points
+        fb = target.connectivity
+        nb = igl.per_vertex_normals(pb, fb)
+        ab = igl.massmatrix(pb, fb).diagonal()
+
+        def wrap(t):
+            if isinstance(t, np.ndarray):
+                return torch.from_numpy(t)
+            else:
+                return t
+
+        def varifold_scalar_product(x, y):
+            px, ax, nx = (
+                wrap(t).type(dtype, non_blocking=True).to(device, non_blocking=True)
+                for t in x
             )
-        )
-
-        # alpha = normales non unitaires
-        areaa = torch.norm(n1, 2, 1)
-        areab = torch.norm(n2, 2, 1)
-
-        nalpha = n1 / areaa.unsqueeze(1)
-        nbeta = n2 / areab.unsqueeze(1)
-
-        def varifold_scalar_product(x, y, areaa, areab, nalpha, nbeta):
+            py, ay, ny = (
+                wrap(t).type(dtype, non_blocking=True).to(device, non_blocking=True)
+                for t in y
+            )
             return torch.dot(
-                areaa.view(-1),
+                ax.view(-1),
                 kernel.convolve(
-                    (x, nalpha), (y, nbeta), areab.view(-1, 1), mode="varifold"
+                    (px, nx),
+                    (py, ny),
+                    ay.view(-1, 1),
+                    mode="varifold",
                 ).view(-1),
             )
 
+        a = pa, aa, na
+        b = pb, ab, nb
+
         if target.norm is None:
-            target.norm = varifold_scalar_product(c2, c2, areab, areab, nbeta, nbeta)
+            target.norm = varifold_scalar_product(b, b)
 
         return (
-            varifold_scalar_product(c1, c1, areaa, areaa, nalpha, nalpha)
+            varifold_scalar_product(a, a)
             + target.norm
-            - 2 * varifold_scalar_product(c1, c2, areaa, areab, nalpha, nbeta)
+            - 2 * varifold_scalar_product(a, b)
+        )
+
+    @staticmethod
+    def extended_varifold_distance(
+        points: Tensor,
+        source: SurfaceMesh,
+        target: SurfaceMesh,
+        kernel: AbstractKernel,
+    ):
+        """
+        Returns the extended_varifold distance between the 3D meshes
+        source and target are SurfaceMesh objects
+        points are source points (torch tensor)
+        """
+        device, _ = utilities.get_best_device(kernel.gpu_mode)
+        dtype = points.dtype
+
+        pa = points
+        fa = source.connectivity
+        na = igl.per_vertex_normals(pa.detach(), fa)
+        aa = igl.massmatrix(pa.detach(), fa).diagonal()
+        if hasattr(source, "_h_field"):
+            ha = source._h_field
+        else:
+            hna = (igl.cotmatrix(pa.detach(), fa) * pa.detach()) / np.expand_dims(
+                aa, axis=1
+            )
+            ha = np.vecdot(hna, na, axis=1)
+
+        pb = target.points
+        fb = target.connectivity
+        nb = igl.per_vertex_normals(pb, fb)
+        ab = igl.massmatrix(pb, fb).diagonal()
+        if hasattr(target, "_h_field"):
+            hb = target._h_field
+        else:
+            hnb = (igl.cotmatrix(pb, fb) * pb) / np.expand_dims(ab, axis=1)
+            hb = target._h_field = np.vecdot(hnb, nb, axis=1)
+
+        def wrap(t):
+            if isinstance(t, np.ndarray):
+                return torch.from_numpy(t)
+            else:
+                return t
+
+        def extended_varifold_scalar_product(x, y):
+            px, ax, nx, hx = (
+                wrap(t).type(dtype, non_blocking=True).to(device, non_blocking=True)
+                for t in x
+            )
+            py, ay, ny, hy = (
+                wrap(t).type(dtype, non_blocking=True).to(device, non_blocking=True)
+                for t in y
+            )
+            return torch.dot(
+                ax.view(-1),
+                kernel.convolve(
+                    (px, nx, hx),
+                    (py, ny, hy),
+                    ay.view(-1, 1),
+                    mode="extended_varifold",
+                ).view(-1),
+            )
+
+        a = pa, aa, na, ha
+        b = pb, ab, nb, hb
+
+        if target.norm is None:
+            target.norm = extended_varifold_scalar_product(b, b)
+
+        return (
+            extended_varifold_scalar_product(a, a)
+            + target.norm
+            - 2 * extended_varifold_scalar_product(a, b)
         )
 
     @staticmethod
