@@ -1,12 +1,9 @@
-import os.path
-import torch
 
-from ...support.utilities.singleton_pattern import Singleton
+from deformetrica.support.utilities.singleton_pattern import Singleton
 
 
 @Singleton
 class GeneralSettings:
-
     """
     General settings, shared across the whole code.
     Singleton pattern.

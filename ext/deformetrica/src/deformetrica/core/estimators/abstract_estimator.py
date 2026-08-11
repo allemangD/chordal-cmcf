@@ -1,14 +1,12 @@
 import logging
-import os
 from abc import ABC, abstractmethod
 
-from ...core import default
+from deformetrica.core import default
 
 logger = logging.getLogger(__name__)
 
 
 class AbstractEstimator(ABC):
-
     """
     AbstractEstimator object class.
     An estimator is an algorithm which updates the fixed effects of a statistical model.
@@ -19,13 +17,28 @@ class AbstractEstimator(ABC):
     ### Constructor:
     ################################################################################
 
-    def __init__(self, statistical_model=None, dataset=None, name='undefined', verbose=default.verbose,
-                 optimized_log_likelihood=default.optimized_log_likelihood,
-                 max_iterations=default.max_iterations, convergence_tolerance=default.convergence_tolerance,
-                 print_every_n_iters=default.print_every_n_iters, save_every_n_iters=default.save_every_n_iters,
-                 population_RER={}, individual_RER={},
-                 callback=None, state_file=None, output_dir=default.output_dir):
+    def __init__(
+        self,
+        statistical_model=None,
+        dataset=None,
+        name="undefined",
+        verbose=default.verbose,
+        optimized_log_likelihood=default.optimized_log_likelihood,
+        max_iterations=default.max_iterations,
+        convergence_tolerance=default.convergence_tolerance,
+        print_every_n_iters=default.print_every_n_iters,
+        save_every_n_iters=default.save_every_n_iters,
+        population_RER=None,
+        individual_RER=None,
+        callback=None,
+        state_file=None,
+        output_dir=default.output_dir,
+    ):
 
+        if individual_RER is None:
+            individual_RER = {}
+        if population_RER is None:
+            population_RER = {}
         self.statistical_model = statistical_model
         self.dataset = dataset
         self.name = name
@@ -49,26 +62,37 @@ class AbstractEstimator(ABC):
     @abstractmethod
     def update(self):
         if self.statistical_model is None:
-            raise RuntimeError('statistical_model has not been set')
+            raise RuntimeError("statistical_model has not been set")
 
     @abstractmethod
     def write(self):
         pass
 
-    def _call_user_callback(self, current_log_likelihood, current_attachment, current_regularity, gradient):
+    def _call_user_callback(
+        self, current_log_likelihood, current_attachment, current_regularity, gradient
+    ):
         if self.callback is not None:
             try:
-                self.callback_ret = self.callback(self.__format_callback_data(current_log_likelihood, current_attachment, current_regularity, gradient))
+                self.callback_ret = self.callback(
+                    self.__format_callback_data(
+                        current_log_likelihood,
+                        current_attachment,
+                        current_regularity,
+                        gradient,
+                    )
+                )
             except Exception as e:
                 logger.error(e)
         else:
-            logger.warning('Trying to call user callback that has not been specified')
+            logger.warning("Trying to call user callback that has not been specified")
 
-    def __format_callback_data(self, current_log_likelihood, current_attachment, current_regularity, gradient):
+    def __format_callback_data(
+        self, current_log_likelihood, current_attachment, current_regularity, gradient
+    ):
         return {
-            'current_iteration': self.current_iteration,
-            'current_log_likelihood': current_log_likelihood,
-            'current_attachment': current_attachment,
-            'current_regularity': current_regularity,
-            'gradient': gradient
+            "current_iteration": self.current_iteration,
+            "current_log_likelihood": current_log_likelihood,
+            "current_attachment": current_attachment,
+            "current_regularity": current_regularity,
+            "gradient": gradient,
         }
