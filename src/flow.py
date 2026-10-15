@@ -12,15 +12,15 @@ logger = logging.getLogger(__name__)
 
 
 def flow(
-    u_path: Path,
-    v_path: Path,
-    *,
-    rate_0=0.05,
-    growth=1.4,
-    rate_max=500,
-    max_iters=100,
-    stop_speed=1e-4,
-    epsilon=1e-4,
+        u_path: Path,
+        v_path: Path,
+        *,
+        rate_0=0.05,
+        growth=1.4,
+        rate_max=500,
+        max_iters=100,
+        stop_speed=1e-4,
+        epsilon=1e-4,
 ):
     pipe = vtkPolyDataReader()
     pipe.file_name = u_path
@@ -111,3 +111,70 @@ def flow(
     pipe.Update()
 
     return u_path, v_path
+
+
+def flow_3d(
+        u_path: Path,
+        *,
+        rate_0=0.05,
+        growth=1.4,
+        rate_max=500,
+        max_iters=100,
+        stop_speed=1e-4,
+        epsilon=1e-4,
+):
+    pipe = vtkPolyDataReader()
+    pipe.file_name = u_path
+    pipe.Update()
+    u: vtkPolyData = pipe.output
+
+    f_u = np.asarray(u.polys.connectivity_array).reshape((-1, 3))
+    ff = f_u
+
+    cc = np.asarray(u.points)
+    uu = cc[..., :3]
+
+    cc_cent = np.mean(cc, axis=0, keepdims=True)
+    cc[...] -= cc_cent
+    cc_norm = np.sqrt(np.mean(np.square(cc)))
+
+    ll = igl.cotmatrix(cc, ff)
+
+    ii = epsilon * sp.sparse.eye(len(cc))
+
+    rate = rate_0
+
+    prev = np.empty_like(cc)
+    for it in range(max_iters):
+        logger.debug(f"{it=}: {rate=:.3e}")
+        mm = igl.massmatrix(cc, ff)
+
+        np.copyto(prev, cc)
+
+        cc[...] = cho_factor(
+            mm + ii - rate * ll,
+        ).solve(
+            (mm + ii) @ cc,
+        )
+
+        cc[...] -= np.mean(cc, axis=0, keepdims=True)
+        cc[...] *= cc_norm / np.sqrt(np.mean(np.square(cc)))
+
+        mean_speed = np.sqrt(np.mean(np.square(cc - prev))) / rate
+        logger.debug(f"{mean_speed=:.3e}")
+        if mean_speed < stop_speed:
+            logger.info("reached stop condition.")
+            break
+        rate = np.clip(rate * growth, 0, rate_max)
+    else:
+        logger.info("maximum iterations exceeded.")
+
+    u_path = u_path.with_stem(f"{u_path.stem}-flow")
+    u.points = uu
+    pipe = vtkPolyDataWriter()
+    pipe.file_name = u_path
+    pipe.SetFileTypeToBinary()
+    pipe.input_data = u
+    pipe.Update()
+
+    return u_path
